@@ -15,6 +15,7 @@ Optional env:
 """
 import base64
 import glob
+import hashlib
 import http.client
 import json
 import os
@@ -27,6 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 
 UPSTREAM = os.environ.get("UPSTREAM_REPO", "wancDDY/ST-Ctrl")
 TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -80,6 +82,17 @@ def find_tool(name):
         raise SystemExit(f"cannot find {name} under {home}")
     cands.sort(key=lambda p: [int(x) if x.isdigit() else 0 for x in re.split(r"[./\\-]", p)])
     return cands[-1]
+
+
+def patch_dex(data, old_slug, new_slug):
+    """Replace the channel slug and repair the dex header (signature first, then checksum)."""
+    count = data.count(old_slug)
+    if not count:
+        return data, 0
+    b = bytearray(data.replace(old_slug, new_slug))
+    b[12:32] = hashlib.sha1(bytes(b[32:])).digest()
+    b[8:12] = (zlib.adler32(bytes(b[12:])) & 0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(b), count
 
 
 def patch_core(src_zip, dst_zip):
@@ -167,8 +180,8 @@ def main():
                 else:
                     data = zin.read(info.filename)
                     if info.filename.startswith("classes") and info.filename.endswith(".dex"):
-                        hits += data.count(OLD_SLUG)
-                        data = data.replace(OLD_SLUG, slug)
+                        data, n = patch_dex(data, OLD_SLUG, slug)
+                        hits += n
                 zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
                 zi.compress_type = info.compress_type
                 zi.external_attr = info.external_attr
