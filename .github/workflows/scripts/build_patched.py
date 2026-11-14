@@ -84,15 +84,42 @@ def find_tool(name):
     return cands[-1]
 
 
+def verify_dex_order(data):
+    """Android rejects a dex whose string_ids table is out of UTF-16 order."""
+    import struct
+    n = struct.unpack_from("<I", data, 0x38)[0]
+    off = struct.unpack_from("<I", data, 0x3C)[0]
+
+    def read(o):
+        i = o
+        while data[i] & 0x80:
+            i += 1
+        i += 1
+        end = data.index(b"\x00", i)
+        raw = data[i:end].replace(b"\xc0\x80", b"\x00")
+        return raw.decode("utf-8", "surrogatepass")
+
+    prev = prev_key = None
+    for k in range(n):
+        s = read(struct.unpack_from("<I", data, off + 4 * k)[0])
+        key = s.encode("utf-16-be", "surrogatepass")
+        if prev_key is not None and key < prev_key:
+            raise SystemExit(f"dex string order broken: {prev!r} then {s!r} - "
+                             "owner name must sort after 'SillyTavern' (first letter > 'S')")
+        prev, prev_key = s, key
+
+
 def patch_dex(data, old_slug, new_slug):
-    """Replace the channel slug and repair the dex header (signature first, then checksum)."""
+    """Replace the channel slug, repair the dex header, verify string order."""
     count = data.count(old_slug)
     if not count:
         return data, 0
     b = bytearray(data.replace(old_slug, new_slug))
     b[12:32] = hashlib.sha1(bytes(b[32:])).digest()
     b[8:12] = (zlib.adler32(bytes(b[12:])) & 0xFFFFFFFF).to_bytes(4, "little")
-    return bytes(b), count
+    out = bytes(b)
+    verify_dex_order(out)
+    return out, count
 
 
 def patch_core(src_zip, dst_zip):
