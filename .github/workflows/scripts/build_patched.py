@@ -127,10 +127,14 @@ def patch_core(src_zip, dst_zip):
         text = zin.read("src/endpoints/tokenizers.js").decode("utf-8")
         if MARKER in text:
             fixed = None
+            log("  core already carries our patch, skip")
+        elif "update(String(text))" not in text:
+            fixed = None
+            log("  core already fixed upstream, skip core patch")
         elif "function stctrlTokenCountKey(model, text)" in text:
             fixed = (text + OVERRIDE).encode("utf-8")
         else:
-            raise SystemExit("tokenizers.js anchor not found - upstream layout changed")
+            raise SystemExit("core still has the bug but the anchor moved - manual review needed")
         with zipfile.ZipFile(dst_zip, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zout:
             for info in zin.infolist():
                 data = fixed if (fixed and info.filename == "src/endpoints/tokenizers.js") else zin.read(info.filename)
